@@ -63,6 +63,14 @@ def _get_int(node, tag, default=None):
         return default
     return default
 
+def _get_new_register_properties_group(node, old_register_properties_group):
+    return {
+        "size": _get_int(node, "size", default=old_register_properties_group["size"]),
+        "access": _get_text(node, 'access', default=old_register_properties_group["access"]),
+        "protection": _get_text(node, 'protection', default=old_register_properties_group["protection"]),
+        "reset_value": _get_int(node, "resetValue", default=old_register_properties_group["reset_value"]),
+        "reset_mask": _get_int(node, "resetMask", default=old_register_properties_group["reset_mask"])
+    }
 
 class SVDParser(object):
     """The SVDParser is responsible for mapping the SVD XML to Python Objects"""
@@ -80,7 +88,7 @@ class SVDParser(object):
 
     #     filename = pkg_resources.resource_filename("cmsis_svd", resource)
     #     return cls.for_xml_file(filename, remove_reserved)
-    
+
     # @classmethod
     # def for_mcu(cls, mcu):
     #     mcu = mcu.lower()
@@ -148,7 +156,7 @@ class SVDParser(object):
             read_action=read_action,
         )
 
-    def _parse_registers(self, register_node):
+    def _parse_register(self, register_node, register_properties_group):
         fields = []
         for field_node in register_node.findall('.//field'):
             node = self._parse_field(field_node)
@@ -160,11 +168,11 @@ class SVDParser(object):
         derived_from = _get_text(register_node, 'derivedFrom')
         description = _get_text(register_node, 'description')
         address_offset = _get_int(register_node, 'addressOffset')
-        size = _get_int(register_node, 'size')
-        access = _get_text(register_node, 'access')
-        protection = _get_text(register_node, 'protection')
-        reset_value = _get_int(register_node, 'resetValue')
-        reset_mask = _get_int(register_node, 'resetMask')
+        size = _get_int(register_node, 'size', default=register_properties_group["size"])
+        access = _get_text(register_node, 'access', default=register_properties_group["access"])
+        protection = _get_text(register_node, 'protection', default=register_properties_group["protection"])
+        reset_value = _get_int(register_node, 'resetValue', default=register_properties_group["reset_value"])
+        reset_mask = _get_int(register_node, 'resetMask', default=register_properties_group["reset_mask"])
         dim_increment = _get_int(register_node, 'dimIncrement')
         dim_index_text = _get_text(register_node, 'dimIndex')
         display_name = _get_text(register_node, 'displayName')
@@ -306,12 +314,17 @@ class SVDParser(object):
             description=_get_text(interrupt_node, 'description')
         )
 
-    def _parse_peripheral(self, peripheral_node):
+    def _parse_peripheral(self, peripheral_node, registerPropertiesGroup):
+        registerPropertiesGroup = _get_new_register_properties_group(peripheral_node, registerPropertiesGroup)
+        registers_node = peripheral_node.find('registers')
+        if registers_node is not None:
+            registerPropertiesGroup = _get_new_register_properties_group(registers_node, registerPropertiesGroup)
+
         # parse registers
         registers = None if peripheral_node.find('registers') is None else []
         register_arrays = None if peripheral_node.find('registers') is None else []
         for register_node in peripheral_node.findall('./registers/register'):
-            reg = self._parse_registers(register_node)
+            reg = self._parse_register(register_node, registerPropertiesGroup)
             if isinstance(reg, SVDRegisterArray):
                 register_arrays.append(reg)
             else:
@@ -395,10 +408,27 @@ class SVDParser(object):
             protection=_get_text(peripheral_node, 'protection'),
         )
 
-    def _parse_device(self, device_node):
+    def _parse_peripherals(self, peripherals_node, registerPropertiesGroup):
         peripherals = []
-        for peripheral_node in device_node.findall('.//peripheral'):
-            peripherals.append(self._parse_peripheral(peripheral_node))
+        registerPropertiesGroup = _get_new_register_properties_group(peripherals_node, registerPropertiesGroup)
+
+        for peripheral_node in peripherals_node.findall('./peripheral'):
+            peripherals.append(self._parse_peripheral(peripheral_node, registerPropertiesGroup))
+
+        return peripherals
+
+    def _parse_device(self, device_node):
+
+        # Find registerPropertiesGroup infos:
+        registerPropertiesGroup = {
+            "size": _get_int(device_node, "size"),
+            "access": _get_text(device_node, 'access'),
+            "protection": _get_text(device_node, 'protection'),
+            "reset_value": _get_int(device_node, "resetValue"),
+            "reset_mask": _get_int(device_node, "resetMask")
+        }
+        peripherals = self._parse_peripherals(device_node.find('./peripherals'), registerPropertiesGroup)
+
         cpu_node = device_node.find('./cpu')
         cpu = SVDCpu(
             name=_get_text(cpu_node, 'name'),
