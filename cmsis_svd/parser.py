@@ -230,7 +230,9 @@ class SVDParser(object):
                 dim_increment=dim_increment,
             )
 
-    def _parse_cluster(self, cluster_node):
+    def _parse_cluster(self, cluster_node, registerPropertiesGroup):
+        registerPropertiesGroup = _get_new_register_properties_group(cluster_node, registerPropertiesGroup)
+
         dim = _get_int(cluster_node, 'dim')
         name = _get_text(cluster_node, 'name')
         derived_from = _get_text(cluster_node, 'derivedFrom')
@@ -247,10 +249,10 @@ class SVDParser(object):
         header_struct_name = _get_text(cluster_node, 'headerStructName')
         cluster = []
         for sub_cluster_node in cluster_node.findall("./cluster"):
-            cluster.append(self._parse_cluster(sub_cluster_node))
+            cluster.append(self._parse_cluster(sub_cluster_node, registerPropertiesGroup))
         register = []
         for reg_node in cluster_node.findall("./register"):
-            register.append(self._parse_registers(reg_node))
+            register.append(self._parse_register(reg_node, registerPropertiesGroup))
 
         if dim is None:
             return SVDRegisterCluster(
@@ -332,7 +334,7 @@ class SVDParser(object):
 
         clusters = []
         for cluster_node in peripheral_node.findall('./registers/cluster'):
-            reg = self._parse_cluster(cluster_node)
+            reg = self._parse_cluster(cluster_node, registerPropertiesGroup)
             clusters.append(reg)
 
         # parse all interrupts for the peripheral
