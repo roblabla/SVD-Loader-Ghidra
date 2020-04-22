@@ -1,8 +1,8 @@
 # Load specified SVD and generate peripheral memory maps & structures.
 #@author Thomas Roth thomas.roth@leveldown.de
 #@category leveldown security
-#@keybinding 
-#@menupath 
+#@keybinding
+#@menupath
 #@toolbar
 
 # More information:
@@ -17,6 +17,33 @@ from ghidra.program.model.address import AddressFactory
 from ghidra.program.model.symbol import SourceType
 from ghidra.program.model.mem import MemoryConflictException
 import traceback
+
+class MiniRegister(object):
+	def __init__(self, reg):
+		self.name = reg.name
+		self._size = reg._size
+		self.description = reg.description
+		self.address_offset = reg.address_offset
+
+class MiniPeripheral(object):
+	def __init__(self, periph):
+		self.name = periph.name
+		self.base_address = periph.base_address
+		self.registers = []
+		for register in periph.registers:
+			self.registers.append(MiniRegister(register))
+
+	def add_register(self, reg):
+		self.registers.append(reg)
+
+	# new_base_addr should **always be lower**
+	def displace(self, new_base_addr):
+		assert(new_base_addr <= self.base_address)
+		offset = new_base_addr - self.base_address
+		self.base_address = new_base_addr
+		if offset != 0:
+			for register in self.registers:
+				register.address_offset += offset
 
 class MemoryRegion:
 	def __init__(self, name, start, end):
@@ -55,7 +82,6 @@ def calculate_peripheral_size(peripheral):
 		size = max(size, register.address_offset + register._size/8)
 	return size
 
-
 svd_file = askFile("Choose SVD file", "Load SVD File")
 
 print("Loading SVD file...")
@@ -79,7 +105,7 @@ if cpu_endian and cpu_endian != "little":
 	sys.exit(1)
 
 # Get things we need
-listing = currentProgram.getListing()	
+listing = currentProgram.getListing()
 symtbl = currentProgram.getSymbolTable()
 dtm = currentProgram.getDataTypeManager()
 space = currentProgram.getAddressFactory().getDefaultAddressSpace()
@@ -120,8 +146,47 @@ for r in memory_regions:
 
 print("\tDone!")
 
-print("Generating peripherals...")
+def peripherals_overlap(x, y):
+	x_start = x.base_address
+	x_stop = x_start + calculate_peripheral_size(x)
+	y_start = y.base_address
+	y_stop = y_start + calculate_peripheral_size(y)
+	if x_start == x_stop or y_start == y_stop:
+		return False
+	return ((x_start < y_stop  and x_stop > y_start) or
+			(x_stop  > y_start and y_stop > x_start))
+
+
+merged_peripherals = []
+
+def merge_or_append(peripheral):
+	for merged_peripheral in merged_peripherals:
+		if peripherals_overlap(peripheral, merged_peripheral):
+			print("Merging " + peripheral.name + " (" + hex(peripheral.base_address) + ") and " + merged_peripheral.name + "(" + hex(merged_peripheral.base_address) + ")")
+			merged_peripheral.name += "_" + peripheral.name
+			new_base_address = min(merged_peripheral.base_address, peripheral.base_address)
+			print("\tDisplacing merged region by " + str(new_base_address - merged_peripheral.base_address))
+			merged_peripheral.displace(new_base_address)
+
+			p_reg_offset = peripheral.base_address - new_base_address
+			print("\tDisplacing new registers by " + str(p_reg_offset))
+			for register in peripheral.registers:
+				register = MiniRegister(register)
+				register.address_offset += p_reg_offset
+				register.name = peripheral.name + "_" + register.name
+				merged_peripheral.add_register(register)
+				print("\tAdding register " + register.name + " at offset " + str(register.address_offset) + " - new struct size: " + str(calculate_peripheral_size(merged_peripheral)))
+			return
+	merged_peripherals.append(MiniPeripheral(peripheral))
+	return
+
+
+# First, we want to "merge" peripherals together
 for peripheral in peripherals:
+	merge_or_append(peripheral)
+
+print("Generating peripherals...")
+for peripheral in merged_peripherals:
 	print("\t" + peripheral.name)
 
 	if(len(peripheral.registers) == 0):
@@ -149,6 +214,7 @@ for peripheral in peripherals:
 				r_type = UnsignedShortDataType()
 			elif rs == 8:
 				r_type = UnsignedLongLongDataType()
+			print("\t\t" + hex(register.address_offset) + " " + register.name)
 			peripheral_struct.replaceAtOffset(register.address_offset, r_type, register._size/8, register.name, register.description)
 
 
